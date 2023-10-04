@@ -1,9 +1,11 @@
+from datetime import datetime
 import numpy as np
 from scipy.sparse.csgraph import shortest_path
 from data_processing import load_cls_gz, cls_to_csr, cls_to_dict, direct_cls_to_symm
 from utils import generate_date_strings, save_df_to_mysql
 
 
+# 计算距离矩阵
 def get_distance_matrix(cls_matrix):
     # 使用 Dijkstra 算法计算最短路径
     weighted_adjacency_matrix = cls_matrix.copy()
@@ -14,6 +16,7 @@ def get_distance_matrix(cls_matrix):
     return distance_matrix
 
 
+# 计算dc
 def select_dc(distance_matrix):
     n = np.shape(distance_matrix)[0]
     distance_array = np.reshape(distance_matrix, n * n)
@@ -23,14 +26,12 @@ def select_dc(distance_matrix):
     return dc
 
 
-def get_local_density(distance_matrix, dc, method=None):
+# 计算局部密度
+def get_local_density(distance_matrix, dc):
     n = np.shape(distance_matrix)[0]
     rhos = np.zeros(n)
     for i in range(n):
-        if method is None:
-            rhos[i] = np.where(distance_matrix[i, :] < dc)[0].shape[0] - 1
-        else:
-            pass
+        rhos[i] = np.where(distance_matrix[i, :] < dc)[0].shape[0] - 1
     return rhos
 
 
@@ -66,12 +67,20 @@ def get_deltas(distance_matrix, rhos):
     return deltas, nearest_neighbor
 
 
+# 寻找聚类中心
 def find_k_centers(rhos, deltas, k):
     rho_and_delta = rhos * deltas
     centers = np.argsort(-rho_and_delta)
-    return centers[:k]
+    count_inf = np.sum(np.isinf(rho_and_delta))
+    if count_inf > k:
+        centers = centers[:count_inf]
+    else:
+        centers = centers[:k]
+    print(f"centers: {len(centers)}")
+    return centers
 
 
+# 聚类
 def density_peal_cluster(rhos, centers, nearest_neighbor):
     k = np.shape(centers)[0]
     if k == 0:
@@ -79,23 +88,25 @@ def density_peal_cluster(rhos, centers, nearest_neighbor):
         return
     n = np.shape(rhos)[0]
     labels = -1 * np.ones(n).astype(int)
+    dc_dict_idx = -1 * np.ones(n).astype(int)
 
     # 给刚刚找出来的簇心编号0， 1， 2， 3 ......
-    # for i, center in enumerate(centers):
-    #     labels[center] = i
-
+    for i, center in enumerate(centers):
+        labels[center] = i
+        dc_dict_idx[center] = center
     # 以词典中的编号作为簇心编号
-    for center in centers:
-        labels[center] = center
+    # for center in centers:
+    #     labels[center] = center
 
     # 再将每个点编上与其最近的高密度点相同的编号
     rhos_index = np.argsort(-rhos)
     for i, index in enumerate(rhos_index):
         if labels[index] == -1:
             labels[index] = labels[int(nearest_neighbor[index])]
+            dc_dict_idx[index] = dc_dict_idx[int(nearest_neighbor[index])]
         if labels[int(nearest_neighbor[index])] == -1:
             pass
-    return labels
+    return labels, dc_dict_idx
 
 
 if __name__ == '__main__':
@@ -106,25 +117,29 @@ if __name__ == '__main__':
         "database": "wiki_clickstream",
     }
     table_name = 'clickstream'
-    cls_filepath = "data\\clickstream-zhwiki-2023-08.tsv.gz"
-    min_freq = 300
+    min_freq = 500
+    dates = generate_date_strings('2023-08', '2023-08')
 
-    # 数据预处理
-    cls_df = load_cls_gz(cls_filepath, min_freq)
-    cls_dict_df = cls_to_dict(cls_df)
-    direct_cls = cls_to_csr(cls_dict_df, cls_df)
-    symm_cls = direct_cls_to_symm(direct_cls)
+    for date in dates:
 
-    # DPC聚类
-    distance_matrix = get_distance_matrix(symm_cls)  # 计算距离矩阵
-    dc = select_dc(distance_matrix)  # 计算dc
-    rhos = get_local_density(distance_matrix, dc)  # 计算局部密度
-    deltas, nearest_neighbor = get_deltas(distance_matrix, rhos)  # 计算相对距离
-    centers = find_k_centers(rhos, deltas, 200)  # 寻找簇心
-    labels = density_peal_cluster(rhos, centers, nearest_neighbor)
+        cls_filepath = f"data\\clickstream-zhwiki-{date}.tsv.gz"
 
-    # 处理和保存结果
-    result_df = cls_dict_df.assign(density=rhos, dc_dict_idx=labels)
-    result_df = result_df.rename(columns={'term': 'name', 'id': 'dict_idx'})
-    # save_df_to_mysql(result_df, table_name, db_config)
-    pass
+        # 数据预处理，建立无向图
+        cls_df = load_cls_gz(cls_filepath, min_freq)
+        cls_dict_df = cls_to_dict(cls_df)
+        direct_cls = cls_to_csr(cls_dict_df, cls_df)
+        symm_cls = direct_cls_to_symm(direct_cls)
+
+        # DPC聚类
+        distance_matrix = get_distance_matrix(symm_cls)  # 计算距离矩阵
+        dc = select_dc(distance_matrix)  # 计算dc
+        rhos = get_local_density(distance_matrix, dc)  # 计算局部密度
+        deltas, nearest_neighbor = get_deltas(distance_matrix, rhos)  # 计算相对距离
+        centers = find_k_centers(rhos, deltas, 100)  # 寻找簇心
+        labels, dc_dict_idx = density_peal_cluster(rhos, centers, nearest_neighbor)
+
+        # 处理和保存结果
+        result_df = cls_dict_df.assign(density=rhos, dc_dict_idx=dc_dict_idx, label=labels,
+                                       date=datetime.strptime(date, "%Y-%m").date())
+        result_df = result_df.rename(columns={'term': 'name', 'id': 'dict_idx'})
+        save_df_to_mysql(result_df, table_name, db_config)
