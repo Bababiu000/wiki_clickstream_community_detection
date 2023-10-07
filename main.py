@@ -2,7 +2,7 @@ from datetime import datetime
 import numpy as np
 from scipy.sparse.csgraph import shortest_path
 from data_processing import load_cls_gz, cls_to_csr, cls_to_dict, direct_cls_to_symm
-from utils import generate_date_strings, save_df_to_mysql
+from utils import generate_date_strings, save_df_to_mysql, sensitive_words_filter
 
 
 # 计算距离矩阵
@@ -27,11 +27,12 @@ def select_dc(distance_matrix):
 
 
 # 计算局部密度
-def get_local_density(distance_matrix, dc):
+def get_local_density(distance_matrix, dc, symm_cls):
     n = np.shape(distance_matrix)[0]
     rhos = np.zeros(n)
     for i in range(n):
-        rhos[i] = np.where(distance_matrix[i, :] < dc)[0].shape[0] - 1
+        nearest_neighbor_indices = np.where(distance_matrix[i, :] < dc)[0]
+        rhos[i] = np.sum(symm_cls[i, nearest_neighbor_indices])
     return rhos
 
 
@@ -68,14 +69,22 @@ def get_deltas(distance_matrix, rhos):
 
 
 # 寻找聚类中心
-def find_k_centers(rhos, deltas, k):
-    rho_and_delta = rhos * deltas
-    centers = np.argsort(-rho_and_delta)
-    count_inf = np.sum(np.isinf(rho_and_delta))
-    if count_inf > k:
-        centers = centers[:count_inf]
-    else:
-        centers = centers[:k]
+def find_cluster_centers(rhos, deltas, k):
+    # rho_and_delta = rhos * deltas
+    # centers = np.argsort(-rho_and_delta)
+
+    # 找到满足条件 deltas >= 10 的索引
+    condition_indices = np.where(deltas >= 4)[0]
+    # 使用这些索引来排序 rhos 并得到排序后的索引
+    sorted_indices = np.argsort(-rhos[condition_indices])
+    # 使用排序后的索引获取原始索引
+    centers = condition_indices[sorted_indices]
+
+    # count_inf = np.sum(np.isinf(deltas))
+    # if count_inf > k:
+    #     centers = centers[:count_inf]
+    # else:
+    #     centers = centers[:k]
     print(f"centers: {len(centers)}")
     return centers
 
@@ -94,9 +103,6 @@ def density_peal_cluster(rhos, centers, nearest_neighbor):
     for i, center in enumerate(centers):
         labels[center] = i
         dc_dict_idx[center] = center
-    # 以词典中的编号作为簇心编号
-    # for center in centers:
-    #     labels[center] = center
 
     # 再将每个点编上与其最近的高密度点相同的编号
     rhos_index = np.argsort(-rhos)
@@ -117,7 +123,7 @@ if __name__ == '__main__':
         "database": "wiki_clickstream",
     }
     table_name = 'clickstream'
-    min_freq = 500
+    min_freq = 100
     dates = generate_date_strings('2023-08', '2023-08')
 
     for date in dates:
@@ -133,13 +139,14 @@ if __name__ == '__main__':
         # DPC聚类
         distance_matrix = get_distance_matrix(symm_cls)  # 计算距离矩阵
         dc = select_dc(distance_matrix)  # 计算dc
-        rhos = get_local_density(distance_matrix, dc)  # 计算局部密度
+        rhos = get_local_density(distance_matrix, dc, symm_cls)  # 计算局部密度
         deltas, nearest_neighbor = get_deltas(distance_matrix, rhos)  # 计算相对距离
-        centers = find_k_centers(rhos, deltas, 100)  # 寻找簇心
+        centers = find_cluster_centers(rhos, deltas, 100)  # 寻找簇心
         labels, dc_dict_idx = density_peal_cluster(rhos, centers, nearest_neighbor)
 
         # 处理和保存结果
         result_df = cls_dict_df.assign(density=rhos, dc_dict_idx=dc_dict_idx, label=labels,
                                        date=datetime.strptime(date, "%Y-%m").date())
         result_df = result_df.rename(columns={'term': 'name', 'id': 'dict_idx'})
+        # result_df = sensitive_words_filter(result_df)
         save_df_to_mysql(result_df, table_name, db_config)
