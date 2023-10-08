@@ -1,7 +1,7 @@
 from datetime import datetime
 import numpy as np
 from scipy.sparse.csgraph import shortest_path
-from data_processing import load_cls_gz, cls_to_csr, cls_to_dict, direct_cls_to_symm
+from data_processing import load_cls_gz, cls_to_csr, cls_to_dict, direct_cls_to_symm, remove_small_components
 from utils import generate_date_strings, save_df_to_mysql, sensitive_words_filter
 
 
@@ -31,8 +31,10 @@ def get_local_density(distance_matrix, dc, symm_cls):
     n = np.shape(distance_matrix)[0]
     rhos = np.zeros(n)
     for i in range(n):
+        # rhos[i] = np.where(distance_matrix[i, :] < dc)[0].shape[0] - 1
         nearest_neighbor_indices = np.where(distance_matrix[i, :] < dc)[0]
         rhos[i] = np.sum(symm_cls[i, nearest_neighbor_indices])
+        # rhos[i] = np.sum(symm_cls[nearest_neighbor_indices])
     return rhos
 
 
@@ -53,9 +55,6 @@ def get_deltas(distance_matrix, rhos):
         higher_rho_indices = rhos_index[:i]
         min_distance = np.min(distance_matrix[index, higher_rho_indices])
 
-        if min_distance == float('inf'):
-            pass
-
         # 找到最近邻居的索引
         nearest_neighbor_index = np.argmin(distance_matrix[index, higher_rho_indices])
         nearest_neighbor_index = higher_rho_indices[nearest_neighbor_index]
@@ -70,31 +69,26 @@ def get_deltas(distance_matrix, rhos):
 
 # 寻找聚类中心
 def find_cluster_centers(rhos, deltas, k):
-    # rho_and_delta = rhos * deltas
-    # centers = np.argsort(-rho_and_delta)
+    rho_and_delta = rhos * deltas
+    centers = np.argsort(-rho_and_delta)
 
-    # 找到满足条件 deltas >= 10 的索引
-    condition_indices = np.where(deltas >= 4)[0]
-    # 使用这些索引来排序 rhos 并得到排序后的索引
-    sorted_indices = np.argsort(-rhos[condition_indices])
-    # 使用排序后的索引获取原始索引
-    centers = condition_indices[sorted_indices]
+    # condition_indices = np.where(deltas >= 4)[0]
+    # # 使用这些索引来排序 rhos 并得到排序后的索引
+    # sorted_indices = np.argsort(-rhos[condition_indices])
+    # # 使用排序后的索引获取原始索引
+    # centers = condition_indices[sorted_indices]
 
-    # count_inf = np.sum(np.isinf(deltas))
-    # if count_inf > k:
-    #     centers = centers[:count_inf]
-    # else:
-    #     centers = centers[:k]
+    count_inf = np.sum(np.isinf(deltas))
+    if count_inf > k:
+        centers = centers[:count_inf]
+    else:
+        centers = centers[:k]
     print(f"centers: {len(centers)}")
     return centers
 
 
 # 聚类
 def density_peal_cluster(rhos, centers, nearest_neighbor):
-    k = np.shape(centers)[0]
-    if k == 0:
-        print("Can't find any center")
-        return
     n = np.shape(rhos)[0]
     labels = -1 * np.ones(n).astype(int)
     dc_dict_idx = -1 * np.ones(n).astype(int)
@@ -110,9 +104,15 @@ def density_peal_cluster(rhos, centers, nearest_neighbor):
         if labels[index] == -1:
             labels[index] = labels[int(nearest_neighbor[index])]
             dc_dict_idx[index] = dc_dict_idx[int(nearest_neighbor[index])]
-        if labels[int(nearest_neighbor[index])] == -1:
-            pass
     return labels, dc_dict_idx
+
+
+def get_center_distance(distance_matrix, dc_dict_idx):
+    n = distance_matrix.shape[0]
+    center_distance = np.zeros(n)
+    for i, center in enumerate(dc_dict_idx):
+        center_distance[i] = distance_matrix[i][dc_dict_idx[i]]
+    return center_distance
 
 
 if __name__ == '__main__':
@@ -135,18 +135,23 @@ if __name__ == '__main__':
         cls_dict_df = cls_to_dict(cls_df)
         direct_cls = cls_to_csr(cls_dict_df, cls_df)
         symm_cls = direct_cls_to_symm(direct_cls)
+        # 删除节点数量小于n的分部，重设索引
+        symm_cls, removed_node_indices = remove_small_components(symm_cls)
+        cls_dict_df = cls_dict_df[~cls_dict_df['id'].isin(removed_node_indices)]
+        cls_dict_df['id'] = range(len(cls_dict_df))
 
         # DPC聚类
         distance_matrix = get_distance_matrix(symm_cls)  # 计算距离矩阵
         dc = select_dc(distance_matrix)  # 计算dc
         rhos = get_local_density(distance_matrix, dc, symm_cls)  # 计算局部密度
         deltas, nearest_neighbor = get_deltas(distance_matrix, rhos)  # 计算相对距离
-        centers = find_cluster_centers(rhos, deltas, 100)  # 寻找簇心
+        centers = find_cluster_centers(rhos, deltas, 200)  # 寻找簇心
         labels, dc_dict_idx = density_peal_cluster(rhos, centers, nearest_neighbor)
+        center_dis = get_center_distance(distance_matrix, dc_dict_idx)
 
         # 处理和保存结果
-        result_df = cls_dict_df.assign(density=rhos, dc_dict_idx=dc_dict_idx, label=labels,
+        result_df = cls_dict_df.assign(density=rhos, dc_dict_idx=dc_dict_idx, label=labels, center_dis=center_dis,
                                        date=datetime.strptime(date, "%Y-%m").date())
         result_df = result_df.rename(columns={'term': 'name', 'id': 'dict_idx'})
-        # result_df = sensitive_words_filter(result_df)
+        result_df = sensitive_words_filter(result_df)
         save_df_to_mysql(result_df, table_name, db_config)
