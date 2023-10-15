@@ -39,16 +39,3 @@ def save_df_to_mysql(df, table_name, db_config):
     except Exception as e:
         traceback.print_exc()
 
-
-def sensitive_words_filter(df):
-    filtered_rows = df[df['name'].isin(['习近平', '六四事件', '文化大革命', '習近平派系', '对习近平的争议', '反對動態清零政策運動'])]
-    df = df[~df['dc_dict_idx'].isin(filtered_rows['dc_dict_idx'])]
-
-    df.reset_index(drop=True, inplace=True)
-
-    print(f"filtered centers: {df['dc_dict_idx'].nunique()}")
-
-    return df
-
-
-

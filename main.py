@@ -1,8 +1,11 @@
+import time
 from datetime import datetime
 import numpy as np
 from scipy.sparse.csgraph import shortest_path
-from data_processing import load_cls_gz, cls_to_csr, cls_to_dict, direct_cls_to_symm, remove_small_components
-from utils import generate_date_strings, save_df_to_mysql, sensitive_words_filter
+from data_processing import load_cls_gz, sensitive_words_filter, cls_to_csr, cls_to_dict, \
+    direct_cls_to_symm, \
+    remove_small_components
+from utils import generate_date_strings, save_df_to_mysql
 
 
 # 计算距离矩阵
@@ -11,7 +14,8 @@ def get_distance_matrix(cls_matrix):
     weighted_adjacency_matrix = cls_matrix.copy()
     weighted_adjacency_matrix.data = np.ones_like(weighted_adjacency_matrix.data)
 
-    distance_matrix = shortest_path(weighted_adjacency_matrix, directed=False, method='D', return_predecessors=False)
+    distance_matrix = shortest_path(weighted_adjacency_matrix, directed=False, method='D',
+                                    return_predecessors=False)
 
     return distance_matrix
 
@@ -70,20 +74,15 @@ def get_deltas(distance_matrix, rhos):
 # 寻找聚类中心
 def find_cluster_centers(rhos, deltas, k):
     rho_and_delta = rhos * deltas
+    # condition_indices = np.where(deltas >= 2)[0]
+    # centers = condition_indices[np.argsort(-rho_and_delta[condition_indices])]
+
     centers = np.argsort(-rho_and_delta)
 
-    # condition_indices = np.where(deltas >= 4)[0]
-    # # 使用这些索引来排序 rhos 并得到排序后的索引
-    # sorted_indices = np.argsort(-rhos[condition_indices])
-    # # 使用排序后的索引获取原始索引
-    # centers = condition_indices[sorted_indices]
+    centers = centers[:k]
 
-    count_inf = np.sum(np.isinf(deltas))
-    if count_inf > k:
-        centers = centers[:count_inf]
-    else:
-        centers = centers[:k]
     print(f"centers: {len(centers)}")
+
     return centers
 
 
@@ -124,14 +123,19 @@ if __name__ == '__main__':
     }
     table_name = 'clickstream'
     min_freq = 100
+    center_num = 300
     dates = generate_date_strings('2023-08', '2023-08')
 
     for date in dates:
+        print(date)
+
+        start_time = time.time()
 
         cls_filepath = f"data\\clickstream-zhwiki-{date}.tsv.gz"
 
         # 数据预处理，建立无向图
         cls_df = load_cls_gz(cls_filepath, min_freq)
+        cls_df = sensitive_words_filter(cls_df)
         cls_dict_df = cls_to_dict(cls_df)
         direct_cls = cls_to_csr(cls_dict_df, cls_df)
         symm_cls = direct_cls_to_symm(direct_cls)
@@ -139,19 +143,24 @@ if __name__ == '__main__':
         symm_cls, removed_node_indices = remove_small_components(symm_cls)
         cls_dict_df = cls_dict_df[~cls_dict_df['id'].isin(removed_node_indices)]
         cls_dict_df['id'] = range(len(cls_dict_df))
+        cls_dict_df.reset_index(drop=True, inplace=True)
 
         # DPC聚类
         distance_matrix = get_distance_matrix(symm_cls)  # 计算距离矩阵
         dc = select_dc(distance_matrix)  # 计算dc
         rhos = get_local_density(distance_matrix, dc, symm_cls)  # 计算局部密度
         deltas, nearest_neighbor = get_deltas(distance_matrix, rhos)  # 计算相对距离
-        centers = find_cluster_centers(rhos, deltas, 200)  # 寻找簇心
+        centers = find_cluster_centers(rhos, deltas, center_num)  # 寻找簇心
         labels, dc_dict_idx = density_peal_cluster(rhos, centers, nearest_neighbor)
         center_dis = get_center_distance(distance_matrix, dc_dict_idx)
 
         # 处理和保存结果
-        result_df = cls_dict_df.assign(density=rhos, dc_dict_idx=dc_dict_idx, label=labels, center_dis=center_dis,
+        result_df = cls_dict_df.assign(density=rhos, dc_dict_idx=dc_dict_idx, label=labels,
+                                       center_dis=center_dis,
                                        date=datetime.strptime(date, "%Y-%m").date())
         result_df = result_df.rename(columns={'term': 'name', 'id': 'dict_idx'})
-        result_df = sensitive_words_filter(result_df)
         save_df_to_mysql(result_df, table_name, db_config)
+
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        print(f"代码运行时间: {elapsed_time:.2f} 秒")
