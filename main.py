@@ -81,6 +81,8 @@ def find_cluster_centers(rhos, deltas, k):
 
     centers = centers[:k]
 
+    centers = sorted(centers, key=lambda index: -rhos[index])
+
     print(f"centers: {len(centers)}")
 
     return centers
@@ -92,9 +94,9 @@ def density_peal_cluster(rhos, centers, nearest_neighbor):
     labels = -1 * np.ones(n).astype(int)
     dc_dict_idx = -1 * np.ones(n).astype(int)
 
-    # 给刚刚找出来的簇心编号0， 1， 2， 3 ......
+    # 给刚刚找出来的簇心编号 1， 2， 3 ......
     for i, center in enumerate(centers):
-        labels[center] = i
+        labels[center] = i + 1
         dc_dict_idx[center] = center
 
     # 再将每个点编上与其最近的高密度点相同的编号
@@ -124,7 +126,7 @@ if __name__ == '__main__':
     table_name = 'clickstream'
     min_freq = 100
     center_num = 300
-    dates = generate_date_strings('2023-08', '2023-08')
+    dates = generate_date_strings('2023-01', '2023-07')
 
     for date in dates:
         print(date)
