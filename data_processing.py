@@ -24,8 +24,9 @@ def sensitive_words_filter(df):
     patterns = [re.compile(r'.*六四.*'), re.compile(r'.*近平.*'), re.compile(r'.*太子党.*'),
                 re.compile(r'團派'), re.compile(r'政治家族列表'), re.compile(r'反對動態清零政策運動'),
                 re.compile(r'文化大革命'), re.compile(r'习明泽'), re.compile(r'江泽民'), re.compile(r'薄熙来'),
-                re.compile(r'周永康'), re.compile(r'段伟红'), re.compile(r'習遠平'), re.compile(r'共产党'),
-                re.compile(r'胡锦涛'), re.compile(r'.*四通桥.*')]
+                re.compile(r'周永康'), re.compile(r'段伟红'), re.compile(r'習遠平'), re.compile(r'.*共产党.*'),
+                re.compile(r'.*共產黨.*'), re.compile(r'胡锦涛'), re.compile(r'.*四通桥.*'), re.compile(r'.*秦刚.*'),
+                re.compile(r'坦克人'), re.compile(r'赵紫阳')]
 
     filtered_condiction = df['from'].apply(
         lambda x: any(pattern.search(x) for pattern in patterns)) | \

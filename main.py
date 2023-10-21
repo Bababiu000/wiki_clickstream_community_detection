@@ -1,6 +1,7 @@
 import time
 from datetime import datetime
 import numpy as np
+import pandas as pd
 from scipy.sparse.csgraph import shortest_path
 from data_processing import load_cls_gz, sensitive_words_filter, cls_to_csr, cls_to_dict, \
     direct_cls_to_symm, \
@@ -116,6 +117,24 @@ def get_center_distance(distance_matrix, dc_dict_idx):
     return center_distance
 
 
+def get_edges_between_centers(centers, distance_matrix):
+    edges_matrix = distance_matrix[centers][:, centers]
+    # 获取边权重
+    rows, cols = np.where((edges_matrix > 0) & (edges_matrix != np.inf))
+    edge_weights = edges_matrix[rows, cols].astype(int)
+
+    # 构建边的列表
+    edges = [(centers[rows[i]], centers[cols[i]], edge_weights[i]) for i in range(len(rows))]
+
+    return edges
+
+
+def get_direct_edges(adjacency_matrix):
+    rows, cols = adjacency_matrix.nonzero()
+    edges = [(rows[i], cols[i], 1) for i in range(len(rows))]
+    return edges
+
+
 if __name__ == '__main__':
     db_config = {
         "host": "localhost",
@@ -123,10 +142,9 @@ if __name__ == '__main__':
         "password": "colt1911",
         "database": "wiki_clickstream",
     }
-    table_name = 'clickstream'
     min_freq = 100
     center_num = 300
-    dates = generate_date_strings('2023-01', '2023-07')
+    dates = generate_date_strings('2023-08', '2023-08')
 
     for date in dates:
         print(date)
@@ -157,11 +175,18 @@ if __name__ == '__main__':
         center_dis = get_center_distance(distance_matrix, dc_dict_idx)
 
         # 处理和保存结果
-        result_df = cls_dict_df.assign(density=rhos, dc_dict_idx=dc_dict_idx, label=labels,
-                                       center_dis=center_dis,
-                                       date=datetime.strptime(date, "%Y-%m").date())
-        result_df = result_df.rename(columns={'term': 'name', 'id': 'dict_idx'})
-        save_df_to_mysql(result_df, table_name, db_config)
+        # 节点数据
+        cls_node_df = cls_dict_df.assign(density=rhos, dc_dict_idx=dc_dict_idx, label=labels,
+                                         center_dis=center_dis,
+                                         date=datetime.strptime(date, "%Y-%m").date())
+        cls_node_df = cls_node_df.rename(columns={'term': 'name', 'id': 'dict_idx'})
+        save_df_to_mysql(cls_node_df, 'clickstream_node', db_config)
+
+        # 直连边数据
+        center_edge_list = get_edges_between_centers(centers, distance_matrix)
+        cls_center_edge_df = pd.DataFrame(center_edge_list, columns=['node1_dict_idx', 'node2_dict_idx', 'distance'])
+        cls_center_edge_df['date'] = datetime.strptime(date, "%Y-%m").date()
+        save_df_to_mysql(cls_center_edge_df, 'clickstream_edge', db_config)
 
         end_time = time.time()
         elapsed_time = end_time - start_time
