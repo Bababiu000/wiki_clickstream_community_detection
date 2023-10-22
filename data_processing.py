@@ -1,6 +1,4 @@
 import re
-
-import networkx as nx
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
@@ -21,18 +19,13 @@ def load_cls_gz(filepath, min_frequency=10):
 
 
 def sensitive_words_filter(df):
-    patterns = [re.compile(r'.*六四.*'), re.compile(r'.*近平.*'), re.compile(r'.*太子党.*'),
-                re.compile(r'團派'), re.compile(r'政治家族列表'), re.compile(r'反對動態清零政策運動'),
-                re.compile(r'文化大革命'), re.compile(r'习明泽'), re.compile(r'江泽民'), re.compile(r'薄熙来'),
-                re.compile(r'周永康'), re.compile(r'段伟红'), re.compile(r'習遠平'), re.compile(r'.*共产党.*'),
-                re.compile(r'.*共產黨.*'), re.compile(r'胡锦涛'), re.compile(r'.*四通桥.*'), re.compile(r'.*秦刚.*'),
-                re.compile(r'坦克人'), re.compile(r'赵紫阳')]
+    pattern = re.compile(r'.*(近平|太子党|團派|政治家族列表|反對動態清零政策運動|文化大革命|文革|习明泽|江泽民|薄熙来|周永康|段伟红|習遠平|共产党|共產黨|胡锦涛|四通桥|秦刚|坦克人|赵紫阳|刘晓波|第十四世达赖喇嘛|杨家将事件|沈梦雨_(活动人士)|巴拿马文件|六四|柴玲|王丹|封从德|吾爾開希|黄雀行動|中华人民共和国被禁|影帝温家宝|温家宝家族财富|沈栋|康华|官倒|民主运动|中华人民共和国宪法修正案|辱包|膜蛤|抗议|佳士事件).*')
 
-    filtered_condiction = df['from'].apply(
-        lambda x: any(pattern.search(x) for pattern in patterns)) | \
-                          df['to'].apply(lambda x: any(pattern.search(x) for pattern in patterns))
+    filtered_condiction = df['from'].apply(lambda x: bool(pattern.search(x))) | df['to'].apply(lambda x: bool(pattern.search(x)))
     filter_rows = df[filtered_condiction]
-    filter_rows.to_csv('sensitive_words.csv', index=False, header=False)
+    unique_terms = np.union1d(filter_rows['from'].unique(), filter_rows['to'].unique())
+    sensitive_words_df = pd.DataFrame(unique_terms, columns=['term'])
+    sensitive_words_df.to_csv('sensitive_words.csv', index=False, header=False)
 
     df = df[~filtered_condiction]
 
