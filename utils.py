@@ -1,7 +1,25 @@
+import os
 import traceback
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from sqlalchemy import create_engine
+import requests
+
+
+def download_file(url, save_path):
+    if not os.path.exists(save_path):
+        try:
+            with requests.get(url, stream=True) as response:
+                response.raise_for_status()
+                with open(save_path, 'wb') as file:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            file.write(chunk)
+            print(f"Downloaded data from {url} to {save_path}")
+        except Exception as e:
+            print(f"Error downloading data: {str(e)}")
+    else:
+        print(f"File already exists at {save_path}. Skipping download.")
 
 
 def generate_date_strings(start_date_str, end_date_str):
@@ -39,3 +57,10 @@ def save_df_to_mysql(df, table_name, db_config):
     except Exception as e:
         traceback.print_exc()
 
+
+if __name__ == '__main__':
+    dates = generate_date_strings('2020-01', '2020-12')
+    for date in dates:
+        url = f"https://dumps.wikimedia.org/other/clickstream/{date}/clickstream-zhwiki-{date}.tsv.gz"
+        save_path = f"./data/clickstream-zhwiki-{date}.tsv.gz"
+        download_file(url, save_path)
