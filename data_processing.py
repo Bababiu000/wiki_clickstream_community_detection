@@ -70,7 +70,7 @@ def remove_small_components(matrix, min_component_size=20):
     num_nodes = matrix.shape[0]
 
     # 找出连通分量
-    num_components, labels = connected_components(matrix, directed=False)
+    num_components, labels = connected_components(matrix, directed=True, connection='weak')
 
     # 找出节点数量小于n的节点的索引
     nodes_to_remove = [node for node in range(num_nodes) if

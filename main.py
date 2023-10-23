@@ -28,6 +28,7 @@ def select_dc(distance_matrix):
     percent = 2.0 / 100
     position = int(n * (n - 1) * percent)
     dc = np.sort(distance_array)[position + n]
+
     return dc
 
 
@@ -40,6 +41,7 @@ def get_local_density(distance_matrix, dc, symm_cls):
         nearest_neighbor_indices = np.where(distance_matrix[i, :] < dc)[0]
         rhos[i] = np.sum(symm_cls[i, nearest_neighbor_indices])
         # rhos[i] = np.sum(symm_cls[nearest_neighbor_indices])
+
     return rhos
 
 
@@ -69,6 +71,7 @@ def get_deltas(distance_matrix, rhos):
         nearest_neighbor[index] = nearest_neighbor_index.astype(int)
 
     deltas[rhos_index[0]] = np.max(deltas)
+
     return deltas, nearest_neighbor
 
 
@@ -106,32 +109,20 @@ def density_peal_cluster(rhos, centers, nearest_neighbor):
         if labels[index] == -1:
             labels[index] = labels[int(nearest_neighbor[index])]
             dc_dict_idx[index] = dc_dict_idx[int(nearest_neighbor[index])]
+
     return labels, dc_dict_idx
 
 
-def get_center_distance(distance_matrix, dc_dict_idx):
-    n = distance_matrix.shape[0]
-    center_distance = np.zeros(n)
-    for i, center in enumerate(dc_dict_idx):
-        center_distance[i] = distance_matrix[i][dc_dict_idx[i]]
-    return center_distance
-
-
-def get_edges_between_centers(centers, distance_matrix):
-    edges_matrix = distance_matrix[centers][:, centers]
-    # 获取边权重
-    rows, cols = np.where((edges_matrix > 0) & (edges_matrix != np.inf))
-    edge_weights = edges_matrix[rows, cols].astype(int)
-
-    # 构建边的列表
-    edges = [(centers[rows[i]], centers[cols[i]], edge_weights[i]) for i in range(len(rows))]
-
-    return edges
-
-
-def get_direct_edges(adjacency_matrix):
+def get_directed_edges(adjacency_matrix):
     rows, cols = adjacency_matrix.nonzero()
-    edges = [(rows[i], cols[i], 1) for i in range(len(rows))]
+    edges = []
+    for i in range(len(rows)):
+        source_node = rows[i]
+        target_node = cols[i]
+        weight = adjacency_matrix[source_node, target_node]  # 获取相应边的权重
+        distance = 1
+        edges.append((source_node, target_node, weight, distance))
+
     return edges
 
 
@@ -144,7 +135,7 @@ if __name__ == '__main__':
     }
     min_freq = 100
     center_num = 300
-    dates = generate_date_strings('2023-08', '2023-08')
+    dates = generate_date_strings('2023-09', '2023-09')
 
     for date in dates:
         print(date)
@@ -153,17 +144,17 @@ if __name__ == '__main__':
 
         cls_filepath = f"data\\clickstream-zhwiki-{date}.tsv.gz"
 
-        # 数据预处理，建立无向图
+        # 数据预处理，建立有向图
         cls_df = load_cls_gz(cls_filepath, min_freq)
         cls_df = sensitive_words_filter(cls_df)
         cls_dict_df = cls_to_dict(cls_df)
         direct_cls = cls_to_csr(cls_dict_df, cls_df)
-        symm_cls = direct_cls_to_symm(direct_cls)
-        # 删除节点数量小于n的分部，重设索引
-        symm_cls, removed_node_indices = remove_small_components(symm_cls)
+        # 删除有向图中节点数量小于n弱连通分量的，重设索引
+        direct_cls, removed_node_indices = remove_small_components(direct_cls)
         cls_dict_df = cls_dict_df[~cls_dict_df['id'].isin(removed_node_indices)]
         cls_dict_df['id'] = range(len(cls_dict_df))
         cls_dict_df.reset_index(drop=True, inplace=True)
+        symm_cls = direct_cls_to_symm(direct_cls)   # 有向图转无向图
 
         # DPC聚类
         distance_matrix = get_distance_matrix(symm_cls)  # 计算距离矩阵
@@ -172,21 +163,19 @@ if __name__ == '__main__':
         deltas, nearest_neighbor = get_deltas(distance_matrix, rhos)  # 计算相对距离
         centers = find_cluster_centers(rhos, deltas, center_num)  # 寻找簇心
         labels, dc_dict_idx = density_peal_cluster(rhos, centers, nearest_neighbor)
-        center_dis = get_center_distance(distance_matrix, dc_dict_idx)
 
         # 处理和保存结果
         # 节点数据
         cls_node_df = cls_dict_df.assign(density=rhos, dc_dict_idx=dc_dict_idx, label=labels,
-                                         center_dis=center_dis,
                                          date=datetime.strptime(date, "%Y-%m").date())
         cls_node_df = cls_node_df.rename(columns={'term': 'name', 'id': 'dict_idx'})
         save_df_to_mysql(cls_node_df, 'clickstream_node', db_config)
 
         # 直连边数据
-        center_edge_list = get_edges_between_centers(centers, distance_matrix)
-        cls_center_edge_df = pd.DataFrame(center_edge_list, columns=['node1_dict_idx', 'node2_dict_idx', 'distance'])
-        cls_center_edge_df['date'] = datetime.strptime(date, "%Y-%m").date()
-        save_df_to_mysql(cls_center_edge_df, 'clickstream_edge', db_config)
+        edge_list = get_directed_edges(direct_cls)
+        cls_edge_df = pd.DataFrame(edge_list, columns=['source_dict_idx', 'target_dict_idx', 'weight', 'distance'])
+        cls_edge_df['date'] = datetime.strptime(date, "%Y-%m").date()
+        save_df_to_mysql(cls_edge_df, 'clickstream_edge', db_config)
 
         end_time = time.time()
         elapsed_time = end_time - start_time
