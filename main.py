@@ -133,9 +133,9 @@ if __name__ == '__main__':
         "password": "colt1911",
         "database": "wiki_clickstream",
     }
-    min_freq = 100
+    min_freq = 200
     center_num = 300
-    dates = generate_date_strings('2023-09', '2023-09')
+    dates = generate_date_strings('2021-01', '2021-12')
 
     for date in dates:
         print(date)
