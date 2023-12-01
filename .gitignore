@@ -9,3 +9,5 @@ __pycache__/**
 /dataSources/
 /dataSources.local.xml
 data/**
+
+sensitive_words.csv
