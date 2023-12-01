@@ -37,10 +37,7 @@ def get_local_density(distance_matrix, dc, symm_cls):
     n = np.shape(distance_matrix)[0]
     rhos = np.zeros(n)
     for i in range(n):
-        # rhos[i] = np.where(distance_matrix[i, :] < dc)[0].shape[0] - 1
-        nearest_neighbor_indices = np.where(distance_matrix[i, :] < dc)[0]
-        rhos[i] = np.sum(symm_cls[i, nearest_neighbor_indices])
-        # rhos[i] = np.sum(symm_cls[nearest_neighbor_indices])
+        rhos[i] = np.sum(symm_cls[i, :])
 
     return rhos
 
@@ -78,9 +75,6 @@ def get_deltas(distance_matrix, rhos):
 # 寻找聚类中心
 def find_cluster_centers(rhos, deltas, k):
     rho_and_delta = rhos * deltas
-    # condition_indices = np.where(deltas >= 2)[0]
-    # centers = condition_indices[np.argsort(-rho_and_delta[condition_indices])]
-
     centers = np.argsort(-rho_and_delta)
 
     centers = centers[:k]
@@ -92,7 +86,7 @@ def find_cluster_centers(rhos, deltas, k):
     return centers
 
 
-# 聚类
+# 对非聚类中心数据点进行归类
 def density_peal_cluster(rhos, centers, nearest_neighbor):
     n = np.shape(rhos)[0]
     labels = -1 * np.ones(n).astype(int)
@@ -133,9 +127,9 @@ if __name__ == '__main__':
         "password": "colt1911",
         "database": "wiki_clickstream",
     }
-    min_freq = 200
+    min_freq = 100
     center_num = 300
-    dates = generate_date_strings('2021-01', '2021-12')
+    dates = generate_date_strings('2023-09', '2023-09')
 
     for date in dates:
         print(date)
