@@ -1,9 +1,11 @@
+import concurrent
 import os
 import traceback
+import requests
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from sqlalchemy import create_engine
-import requests
+from urllib.parse import quote_plus as urlquote
 
 
 def download_file(url, save_path):
@@ -45,7 +47,7 @@ def save_df_to_mysql(df, table_name, db_config):
     try:
         # 创建数据库连接
         engine = create_engine(
-            f"mysql+pymysql://{db_config['user']}:{db_config['password']}@{db_config['host']}/{db_config['database']}")
+            f"mysql+pymysql://{db_config['user']}:{urlquote(db_config['password'])}@{db_config['host']}/{db_config['database']}")
         connection = engine.connect()
         delete_query = f"DELETE FROM {table_name} WHERE date = DATE('{df['date'][0]}')\n"
         connection.execute(delete_query)
@@ -59,8 +61,10 @@ def save_df_to_mysql(df, table_name, db_config):
 
 
 if __name__ == '__main__':
-    dates = generate_date_strings('2020-01', '2020-12')
-    for date in dates:
-        url = f"https://dumps.wikimedia.org/other/clickstream/{date}/clickstream-zhwiki-{date}.tsv.gz"
-        save_path = f"./data/clickstream-zhwiki-{date}.tsv.gz"
-        download_file(url, save_path)
+    lang = 'en'
+    dates = generate_date_strings('2023-01', '2023-12')
+    url_list = [f"https://dumps.wikimedia.org/other/clickstream/{date}/clickstream-{lang}wiki-{date}.tsv.gz" for date in dates]
+    save_path_list = [f"./data/clickstream-{lang}wiki-{date}.tsv.gz" for date in dates]
+    # 使用ThreadPoolExecutor并行下载
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        executor.map(download_file, url_list, save_path_list)
