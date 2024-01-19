@@ -49,7 +49,7 @@ def save_df_to_mysql(df, table_name, db_config):
         engine = create_engine(
             f"mysql+pymysql://{db_config['user']}:{urlquote(db_config['password'])}@{db_config['host']}/{db_config['database']}")
         connection = engine.connect()
-        delete_query = f"DELETE FROM {table_name} WHERE date = DATE('{df['date'][0]}')\n"
+        delete_query = f"DELETE FROM {table_name} WHERE date = DATE('{df['date'][0]}') AND lang = '{df['lang'][0]}'\n"
         connection.execute(delete_query)
         connection.close()
         # 将 DataFrame 存储到 MySQL 数据库表
@@ -62,9 +62,9 @@ def save_df_to_mysql(df, table_name, db_config):
 
 if __name__ == '__main__':
     lang = 'en'
-    dates = generate_date_strings('2023-01', '2023-12')
+    dates = generate_date_strings('2021-01', '2022-12')
     url_list = [f"https://dumps.wikimedia.org/other/clickstream/{date}/clickstream-{lang}wiki-{date}.tsv.gz" for date in dates]
     save_path_list = [f"./data/clickstream-{lang}wiki-{date}.tsv.gz" for date in dates]
     # 使用ThreadPoolExecutor并行下载
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         executor.map(download_file, url_list, save_path_list)

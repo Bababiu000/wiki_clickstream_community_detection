@@ -1,4 +1,5 @@
 import time
+import traceback
 from datetime import datetime
 import numpy as np
 import pandas as pd
@@ -121,56 +122,71 @@ def get_directed_edges(adjacency_matrix):
 
 
 if __name__ == '__main__':
+    # db_config = {
+    #     "host": "47.113.195.231",
+    #     "user": "root",
+    #     "password": "Gdut123@@",
+    #     "database": "wiki_clickstream",
+    # }
     db_config = {
         "host": "localhost",
         "user": "root",
         "password": "colt1911",
         "database": "wiki_clickstream",
     }
-    min_freq = 100
+    min_freq = 5000
     center_num = 300
-    dates = generate_date_strings('2023-09', '2023-09')
+    lang = 'en'
+    dates = generate_date_strings('2021-05', '2021-05')
 
     for date in dates:
-        print(date)
+        try:
 
-        start_time = time.time()
+            print(date)
 
-        cls_filepath = f"data\\clickstream-zhwiki-{date}.tsv.gz"
+            start_time = time.time()
 
-        # 数据预处理，建立有向图
-        cls_df = load_cls_gz(cls_filepath, min_freq)
-        cls_df = sensitive_words_filter(cls_df)
-        cls_dict_df = cls_to_dict(cls_df)
-        direct_cls = cls_to_csr(cls_dict_df, cls_df)
-        # 删除有向图中节点数量小于n弱连通分量的，重设索引
-        direct_cls, removed_node_indices = remove_small_components(direct_cls)
-        cls_dict_df = cls_dict_df[~cls_dict_df['id'].isin(removed_node_indices)]
-        cls_dict_df['id'] = range(len(cls_dict_df))
-        cls_dict_df.reset_index(drop=True, inplace=True)
-        symm_cls = direct_cls_to_symm(direct_cls)   # 有向图转无向图
+            cls_filepath = f"data\\clickstream-{lang}wiki-{date}.tsv.gz"
 
-        # DPC聚类
-        distance_matrix = get_distance_matrix(symm_cls)  # 计算距离矩阵
-        dc = select_dc(distance_matrix)  # 计算dc
-        rhos = get_local_density(distance_matrix, dc, symm_cls)  # 计算局部密度
-        deltas, nearest_neighbor = get_deltas(distance_matrix, rhos)  # 计算相对距离
-        centers = find_cluster_centers(rhos, deltas, center_num)  # 寻找簇心
-        labels, dc_dict_idx = density_peal_cluster(rhos, centers, nearest_neighbor)
+            # 数据预处理，建立有向图
+            cls_df = load_cls_gz(cls_filepath, min_freq)
+            cls_df = sensitive_words_filter(cls_df, lang)
+            cls_dict_df = cls_to_dict(cls_df)
+            direct_cls = cls_to_csr(cls_dict_df, cls_df)
+            # 删除有向图中节点数量小于n弱连通分量的，重设索引
+            direct_cls, removed_node_indices = remove_small_components(direct_cls)
+            cls_dict_df = cls_dict_df[~cls_dict_df['id'].isin(removed_node_indices)]
+            cls_dict_df['id'] = range(len(cls_dict_df))
+            cls_dict_df.reset_index(drop=True, inplace=True)
+            symm_cls = direct_cls_to_symm(direct_cls)   # 有向图转无向图
 
-        # 处理和保存结果
-        # 节点数据
-        cls_node_df = cls_dict_df.assign(density=rhos, dc_dict_idx=dc_dict_idx, label=labels,
-                                         date=datetime.strptime(date, "%Y-%m").date())
-        cls_node_df = cls_node_df.rename(columns={'term': 'name', 'id': 'dict_idx'})
-        save_df_to_mysql(cls_node_df, 'clickstream_node', db_config)
+            # DPC聚类
+            distance_matrix = get_distance_matrix(symm_cls)  # 计算距离矩阵
+            dc = select_dc(distance_matrix)  # 计算dc
+            rhos = get_local_density(distance_matrix, dc, symm_cls)  # 计算局部密度
+            deltas, nearest_neighbor = get_deltas(distance_matrix, rhos)  # 计算相对距离
+            centers = find_cluster_centers(rhos, deltas, center_num)  # 寻找簇心
+            labels, dc_dict_idx = density_peal_cluster(rhos, centers, nearest_neighbor)
 
-        # 直连边数据
-        edge_list = get_directed_edges(direct_cls)
-        cls_edge_df = pd.DataFrame(edge_list, columns=['source_dict_idx', 'target_dict_idx', 'weight', 'distance'])
-        cls_edge_df['date'] = datetime.strptime(date, "%Y-%m").date()
-        save_df_to_mysql(cls_edge_df, 'clickstream_edge', db_config)
+            # 处理和保存结果
+            # 节点数据
+            cls_node_df = cls_dict_df.assign(density=rhos, dc_dict_idx=dc_dict_idx, label=labels,
+                                             date=datetime.strptime(date, "%Y-%m").date())
+            cls_node_df = cls_node_df.rename(columns={'term': 'name', 'id': 'dict_idx'})
+            cls_node_df['lang'] = lang
+            save_df_to_mysql(cls_node_df, 'clickstream_node', db_config)
 
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        print(f"代码运行时间: {elapsed_time:.2f} 秒")
+            # 直连边数据
+            edge_list = get_directed_edges(direct_cls)
+            cls_edge_df = pd.DataFrame(edge_list, columns=['source_dict_idx', 'target_dict_idx', 'weight', 'distance'])
+            cls_edge_df['date'] = datetime.strptime(date, "%Y-%m").date()
+            cls_edge_df['lang'] = lang
+            save_df_to_mysql(cls_edge_df, 'clickstream_edge', db_config)
+
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"代码运行时间: {elapsed_time:.2f} 秒")
+
+        except Exception as e:
+            print(f"Error : {str(e)}")
+            traceback.print_exc()
