@@ -1,9 +1,13 @@
 import time
 import traceback
 from datetime import datetime
+
 import numpy as np
 import pandas as pd
+import umap.umap_ as umap
 from scipy.sparse.csgraph import shortest_path
+
+from config import DEV_DB_CONFIG
 from data_processing import load_cls_gz, sensitive_words_filter, cls_to_csr, cls_to_dict, \
     direct_cls_to_symm, \
     remove_small_components
@@ -22,19 +26,8 @@ def get_distance_matrix(cls_matrix):
     return distance_matrix
 
 
-# 计算dc
-def select_dc(distance_matrix):
-    n = np.shape(distance_matrix)[0]
-    distance_array = np.reshape(distance_matrix, n * n)
-    percent = 2.0 / 100
-    position = int(n * (n - 1) * percent)
-    dc = np.sort(distance_array)[position + n]
-
-    return dc
-
-
 # 计算局部密度
-def get_local_density(distance_matrix, dc, symm_cls):
+def get_local_density(distance_matrix, symm_cls):
     n = np.shape(distance_matrix)[0]
     rhos = np.zeros(n)
     for i in range(n):
@@ -122,22 +115,11 @@ def get_directed_edges(adjacency_matrix):
 
 
 if __name__ == '__main__':
-    # db_config = {
-    #     "host": "47.113.195.231",
-    #     "user": "root",
-    #     "password": "Gdut123@@",
-    #     "database": "wiki_clickstream",
-    # }
-    db_config = {
-        "host": "localhost",
-        "user": "root",
-        "password": "colt1911",
-        "database": "wiki_clickstream",
-    }
-    min_freq = 5000
+    db_config = DEV_DB_CONFIG
+    min_freq = 100
     center_num = 300
-    lang = 'en'
-    dates = generate_date_strings('2021-05', '2021-05')
+    lang = 'zh'
+    dates = generate_date_strings('2023-01', '2023-11')
 
     for date in dates:
         try:
@@ -153,25 +135,26 @@ if __name__ == '__main__':
             cls_df = sensitive_words_filter(cls_df, lang)
             cls_dict_df = cls_to_dict(cls_df)
             direct_cls = cls_to_csr(cls_dict_df, cls_df)
-            # 删除有向图中节点数量小于n弱连通分量的，重设索引
+            # 删除有向图中节点数量小于n的弱连通分量，重设索引
             direct_cls, removed_node_indices = remove_small_components(direct_cls)
             cls_dict_df = cls_dict_df[~cls_dict_df['id'].isin(removed_node_indices)]
             cls_dict_df['id'] = range(len(cls_dict_df))
             cls_dict_df.reset_index(drop=True, inplace=True)
             symm_cls = direct_cls_to_symm(direct_cls)   # 有向图转无向图
+            # 使用umap对距离矩阵降维，得到二维坐标
+            umap_emb = umap.UMAP(n_components=2).fit_transform(symm_cls)
 
             # DPC聚类
             distance_matrix = get_distance_matrix(symm_cls)  # 计算距离矩阵
-            dc = select_dc(distance_matrix)  # 计算dc
-            rhos = get_local_density(distance_matrix, dc, symm_cls)  # 计算局部密度
+            rhos = get_local_density(distance_matrix, symm_cls)  # 计算局部密度
             deltas, nearest_neighbor = get_deltas(distance_matrix, rhos)  # 计算相对距离
             centers = find_cluster_centers(rhos, deltas, center_num)  # 寻找簇心
             labels, dc_dict_idx = density_peal_cluster(rhos, centers, nearest_neighbor)
 
             # 处理和保存结果
             # 节点数据
-            cls_node_df = cls_dict_df.assign(density=rhos, dc_dict_idx=dc_dict_idx, label=labels,
-                                             date=datetime.strptime(date, "%Y-%m").date())
+            cls_node_df = cls_dict_df.assign(density=rhos, dc_dict_idx=dc_dict_idx, label=labels, x=umap_emb[:, 0],
+                                             y=umap_emb[:, 1], date=datetime.strptime(date, "%Y-%m").date())
             cls_node_df = cls_node_df.rename(columns={'term': 'name', 'id': 'dict_idx'})
             cls_node_df['lang'] = lang
             save_df_to_mysql(cls_node_df, 'clickstream_node', db_config)
