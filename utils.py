@@ -62,7 +62,7 @@ def save_df_to_mysql(df, table_name, db_config):
 
 if __name__ == '__main__':
     lang = 'en'
-    dates = generate_date_strings('2024-01', '2024-01')
+    dates = generate_date_strings('2020-01', '2020-12')
     url_list = [f"https://dumps.wikimedia.org/other/clickstream/{date}/clickstream-{lang}wiki-{date}.tsv.gz" for date in dates]
     save_path_list = [f"./data/clickstream-{lang}wiki-{date}.tsv.gz" for date in dates]
     # 使用ThreadPoolExecutor并行下载

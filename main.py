@@ -6,10 +6,10 @@ import numpy as np
 import pandas as pd
 import umap.umap_ as umap
 from scipy.sparse.csgraph import shortest_path
+import matplotlib.pyplot as plt
 
 from config import DEV_DB_CONFIG
-from data_processing import load_cls_gz, sensitive_words_filter, cls_to_csr, cls_to_dict, \
-    direct_cls_to_symm, \
+from data_processing import load_cls_gz, sensitive_words_filter, cls_to_csr, cls_to_dict, direct_cls_to_symm, \
     remove_small_components
 from utils import generate_date_strings, save_df_to_mysql
 
@@ -69,15 +69,45 @@ def get_deltas(distance_matrix, rhos):
 # 寻找聚类中心
 def find_cluster_centers(rhos, deltas, k):
     rho_and_delta = rhos * deltas
-    centers = np.argsort(-rho_and_delta)
+    centers = np.argsort(-rho_and_delta)  # 按 rhos * deltas 的值进行降序排序
 
     centers = centers[:k]
 
-    centers = sorted(centers, key=lambda index: -rhos[index])
+    centers = sorted(centers, key=lambda index: -rhos[index])   # 将centers 按 rhos 的值进行降序排序
 
     print(f"centers: {len(centers)}")
 
     return centers
+
+
+def plot_decision_graph(rhos, deltas, centers, dict_df):
+    # 将delta中无穷大值替换为最大值加1
+    deltas_copy = np.copy(deltas)
+    max_non_inf = np.max(deltas_copy[np.isfinite(deltas_copy)])  # 找到除了无穷大值之外的最大值
+    deltas_copy[np.isinf(deltas_copy)] = max_non_inf + 1  # 将无穷大值替换为最大值加1
+
+    plt.rcParams['font.family'] = ['SimHei']
+    plt.figure(figsize=(8, 6))
+    plt.scatter(rhos, deltas_copy, c='blue', s=20, alpha=0.5)
+
+    # 标记所有聚类中心为红色点
+    for index, center in enumerate(centers):
+        if index < 300:
+            plt.scatter(rhos[center], deltas_copy[center], c='red', marker='o', s=20)
+
+        # if dict_df.loc[center, 'term'] == '奧本海默_(電影)':
+        # if dict_df.loc[center, 'term'] == 'Oppenheimer_(film)':
+        # if dict_df.loc[center, 'term'] == 'Taylor_Swift':
+        if dict_df.loc[center, 'term'] == '長相思_(電視劇)':
+            # 计算重要性排名与节点总数的比值
+            ratio = "{:.6f}".format((index + 1) / len(rhos))
+            plt.text(rhos[center], deltas_copy[center], f"{dict_df.loc[center, 'term']} {ratio}", fontsize=10,
+                     ha='center', va='bottom')
+
+    plt.title(date)
+    plt.xlabel('局部密度')
+    plt.ylabel('相对距离')
+    plt.show()
 
 
 # 对非聚类中心数据点进行归类
@@ -114,12 +144,26 @@ def get_directed_edges(adjacency_matrix):
     return edges
 
 
+def get_aggregate_edges(distance_matrix, centers, edges):
+    sub_matrix = distance_matrix[np.ix_(centers, centers)]
+    rows, cols = sub_matrix.nonzero()
+    # 遍历子矩阵，找出距离大于1的边
+    for i in range(len(rows)):
+        distance = sub_matrix[rows[i], cols[i]]
+        if 1 < distance < np.inf:
+            source_node = centers[rows[i]]  # 映射回原始索引
+            target_node = centers[cols[i]]  # 映射回原始索引
+            edges.append((source_node, target_node, None, distance))
+
+    return edges
+
+
 if __name__ == '__main__':
     db_config = DEV_DB_CONFIG
     min_freq = 100
     center_num = 300
     lang = 'zh'
-    dates = generate_date_strings('2023-01', '2023-11')
+    dates = generate_date_strings('2023-07', '2023-07')
 
     for date in dates:
         try:
@@ -140,7 +184,7 @@ if __name__ == '__main__':
             cls_dict_df = cls_dict_df[~cls_dict_df['id'].isin(removed_node_indices)]
             cls_dict_df['id'] = range(len(cls_dict_df))
             cls_dict_df.reset_index(drop=True, inplace=True)
-            symm_cls = direct_cls_to_symm(direct_cls)   # 有向图转无向图
+            symm_cls = direct_cls_to_symm(direct_cls)  # 有向图转无向图
             # 使用umap对距离矩阵降维，得到二维坐标
             umap_emb = umap.UMAP(n_components=2).fit_transform(symm_cls)
 
@@ -149,6 +193,7 @@ if __name__ == '__main__':
             rhos = get_local_density(distance_matrix, symm_cls)  # 计算局部密度
             deltas, nearest_neighbor = get_deltas(distance_matrix, rhos)  # 计算相对距离
             centers = find_cluster_centers(rhos, deltas, center_num)  # 寻找簇心
+            # plot_decision_graph(rhos, deltas, centers, cls_dict_df)  # 绘制决策图
             labels, dc_dict_idx = density_peal_cluster(rhos, centers, nearest_neighbor)
 
             # 处理和保存结果
@@ -161,6 +206,8 @@ if __name__ == '__main__':
 
             # 直连边数据
             edge_list = get_directed_edges(direct_cls)
+            # 聚合边数据
+            # edge_list = get_aggregate_edges(distance_matrix, centers, edge_list)
             cls_edge_df = pd.DataFrame(edge_list, columns=['source_dict_idx', 'target_dict_idx', 'weight', 'distance'])
             cls_edge_df['date'] = datetime.strptime(date, "%Y-%m").date()
             cls_edge_df['lang'] = lang
